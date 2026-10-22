@@ -1,4 +1,17 @@
-import type { NasaImage, NasaSearchItem, NasaSearchResponse, SearchImagesParams, SearchPage, } from '@/api/types'
+import type {
+  ImageVersion,
+  NasaAssetResponse,
+  NasaImage,
+  NasaSearchItem,
+  NasaSearchResponse,
+  SearchImagesParams,
+  SearchPage,
+} from '@/api/types'
+import { toImageVersions } from '@/lib/asset-version'
+import { toHttps } from '@/lib/to-https'
+
+export const NASA_API_BASE_URL = 'https://images-api.nasa.gov'
+export const PAGE_SIZE = 24
 
 /** Thrown for non-2xx responses; carries the HTTP status. */
 export class NasaApiError extends Error {
@@ -23,11 +36,11 @@ export function buildSearchUrl({
   yearEnd,
   page = 1,
 }: SearchImagesParams): URL {
-  const url = new URL('/search', import.meta.env.VITE_NASA_API_URL)
+  const url = new URL('/search', NASA_API_BASE_URL)
   url.searchParams.set('q', q)
   url.searchParams.set('media_type', 'image')
   url.searchParams.set('page', String(page))
-  url.searchParams.set('page_size', String(import.meta.env.VITE_PAGE_SIZE))
+  url.searchParams.set('page_size', String(PAGE_SIZE))
   if (yearStart) url.searchParams.set('year_start', yearStart)
   if (yearEnd) url.searchParams.set('year_end', yearEnd)
   return url
@@ -48,7 +61,7 @@ export function mapSearchItem(item: NasaSearchItem): NasaImage | null {
     location: data.location,
     photographer: data.photographer,
     dateCreated: data.date_created,
-    thumbnailUrl: preview?.href?.replace(/^http:\/\//i, 'https://'),
+    thumbnailUrl: preview ? toHttps(preview.href) : undefined,
   }
 }
 
@@ -72,4 +85,30 @@ export async function searchImages(
     totalHits: collection.metadata.total_hits,
     nextPage: hasNext ? page + 1 : undefined,
   }
+}
+
+/**
+ * The API has no "get by id" endpoint, so this searches by `nasa_id`.
+ * Resolves to `null` when no image has that id.
+ */
+export async function getImageDetails(
+  nasaId: string,
+  signal?: AbortSignal,
+): Promise<NasaImage | null> {
+  const url = new URL('/search', NASA_API_BASE_URL)
+  url.searchParams.set('nasa_id', nasaId)
+  url.searchParams.set('media_type', 'image')
+
+  const { collection } = await fetchJson<NasaSearchResponse>(url, signal)
+  return mapItems(collection.items).find((i) => i.nasaId === nasaId) ?? null
+}
+
+export async function getImageAssets(
+  nasaId: string,
+  signal?: AbortSignal,
+): Promise<ImageVersion[]> {
+  const url = new URL(`/asset/${encodeURIComponent(nasaId)}`, NASA_API_BASE_URL)
+
+  const { collection } = await fetchJson<NasaAssetResponse>(url, signal)
+  return toImageVersions(collection.items.map((item) => item.href))
 }
